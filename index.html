@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Real-Time IP & Device Tracker</title>
+
+  <!-- Leaflet CSS -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet/dist/leaflet.css"
+  />
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Courier New', Courier, monospace;
+      background-color: #0d0d0d;
+      color: #00ff00;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    #map {
+      height: 50vh;
+      border-bottom: 2px solid #00ff00;
+    }
+    #log-table {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+      font-size: 14px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      color: #00ff00;
+    }
+    th, td {
+      border: 1px solid #00ff00;
+      padding: 6px 8px;
+      text-align: left;
+    }
+    th {
+      background-color: #003300;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    button {
+      margin: 10px;
+      background: #003300;
+      border: 1px solid #00ff00;
+      color: #00ff00;
+      padding: 8px 16px;
+      cursor: pointer;
+      font-family: 'Courier New', Courier, monospace;
+      transition: background-color 0.3s;
+      align-self: flex-start;
+    }
+    button:hover {
+      background-color: #006600;
+    }
+    footer {
+      padding: 8px;
+      text-align: center;
+      font-size: 14px;
+      border-top: 1px solid #00ff00;
+      background-color: #001100;
+    }
+    footer a {
+      color: #00ff00;
+      text-decoration: none;
+    }
+    footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="map"></div>
+
+  <button id="ai-analyze">Analyze Locations (AI)</button>
+
+  <div id="log-table">
+    <table>
+      <thead>
+        <tr>
+          <th>IP Address</th>
+          <th>City</th>
+          <th>Country</th>
+          <th>Device</th>
+          <th>Device Model</th>
+          <th>OS</th>
+          <th>Browser</th>
+          <th>Screen</th>
+          <th>Battery %</th>
+          <th>Timezone</th>
+          <th>Language</th>
+          <th>Phone Number</th>
+          <th>Time (UTC)</th>
+        </tr>
+      </thead>
+      <tbody id="logs-body"></tbody>
+    </table>
+  </div>
+  <footer>
+    Developed by <a href="https://yosefsolomon21.github.io/Yosefsolomon/#Projects" target="_blank" rel="noopener noreferrer">Ethical Hacker Yosef Solomon</a>
+  </footer>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import {
+      getFirestore,
+      collection,
+      addDoc,
+      onSnapshot,
+      query,
+      orderBy,
+      limit
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    // Your Firebase config - REPLACE THESE WITH YOUR CREDENTIALS
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // Initialize Leaflet map
+    const map = L.map("map").setView([20, 0], 2);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "© OpenStreetMap contributors",
+    }).addTo(map);
+
+    // Device model detection (simplified, mostly mobile)
+    function getDeviceModel() {
+      const ua = navigator.userAgent;
+      // iPhone
+      if (/iPhone/.test(ua)) {
+        const model = ua.match(/\((iPhone; CPU iPhone OS [\d_]+)/);
+        return model ? model[1].replace(/_/g, ".") : "iPhone";
+      }
+      // Android (detect brand/model roughly)
+      if (/Android/.test(ua)) {
+        const modelMatch = ua.match(/Android.*;\s([^)]+)\)/);
+        return modelMatch ? modelMatch[1].trim() : "Android Device";
+      }
+      return "Unknown Model";
+    }
+
+    // Helper: detect device type
+    function getDeviceType() {
+      const ua = navigator.userAgent;
+      if (/mobile/i.test(ua)) return "Mobile";
+      if (/tablet/i.test(ua)) return "Tablet";
+      return "Desktop";
+    }
+
+    // Helper: parse OS from userAgent
+    function getOS() {
+      const ua = navigator.userAgent;
+      if (/Windows NT 10.0/.test(ua)) return "Windows 10";
+      if (/Windows NT 6.3/.test(ua)) return "Windows 8.1";
+      if (/Windows NT 6.2/.test(ua)) return "Windows 8";
+      if (/Windows NT 6.1/.test(ua)) return "Windows 7";
+      if (/Mac OS X/.test(ua)) {
+        const match = ua.match(/Mac OS X ([\d_]+)/);
+        if (match) return "Mac OS X " + match[1].replace(/_/g, ".");
+        return "Mac OS X";
+      }
+      if (/Android/.test(ua)) {
+        const match = ua.match(/Android ([\d\.]+)/);
+        return match ? "Android " + match[1] : "Android";
+      }
+      if (/iPhone OS/.test(ua)) {
+        const match = ua.match(/iPhone OS ([\d_]+)/);
+        return match ? "iOS " + match[1].replace(/_/g, ".") : "iOS";
+      }
+      if (/Linux/.test(ua)) return "Linux";
+      return "Unknown OS";
+    }
+
+    // Helper: parse browser from userAgent
+    function getBrowser() {
+      const ua = navigator.userAgent;
+      if (/Chrome\/([\d.]+)/.test(ua) && !/Edge\/([\d.]+)/.test(ua)) {
+        const match = ua.match(/Chrome\/([\d.]+)/);
+        return "Chrome " + (match ? match[1] : "");
+      }
+      if (/Firefox\/([\d.]+)/.test(ua)) {
+        const match = ua.match(/Firefox\/([\d.]+)/);
+        return "Firefox " + (match ? match[1] : "");
+      }
+      if (/Safari\/([\d.]+)/.test(ua) && /Version\/([\d.]+)/.test(ua)) {
+        const v = ua.match(/Version\/([\d.]+)/)[1];
+        return "Safari " + v;
+      }
+      if (/Edg\/([\d.]+)/.test(ua)) {
+        const match = ua.match(/Edg\/([\d.]+)/);
+        return "Edge " + (match ? match[1] : "");
+      }
+      return "Unknown Browser";
+    }
+
+    // Add marker function with detailed popup
+    function addMarker(info) {
+      const popupContent = `
+        <b>IP:</b> ${info.ip}<br>
+        <b>City:</b> ${info.city}<br>
+        <b>Country:</b> ${info.country}<br>
+        <b>Device:</b> ${info.device}<br>
+        <b>Model:</b> ${info.deviceModel}<br>
+        <b>OS:</b> ${info.os}<br>
+        <b>Browser:</b> ${info.browser}<br>
+        <b>Screen:</b> ${info.screen}<br>
+        <b>Battery %:</b> ${info.battery !== null ? info.battery + "%" : "N/A"}<br>
+        <b>Timezone:</b> ${info.timezone}<br>
+        <b>Language:</b> ${info.language}<br>
+        <b>Phone #:</b> ${info.phoneNumber || "N/A"}
+      `;
+      L.marker([info.lat, info.lon])
+        .addTo(map)
+        .bindPopup(popupContent);
+    }
+
+    // Add row to log table
+    function addLogRow(info) {
+      const tbody = document.getElementById("logs-body");
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${info.ip}</td>
+        <td>${info.city}</td>
+        <td>${info.country}</td>
+        <td>${info.device}</td>
+        <td>${info.deviceModel}</td>
+        <td>${info.os}</td>
+        <td>${info.browser}</td>
+        <td>${info.screen}</td>
+        <td>${info.battery !== null ? info.battery + "%" : "N/A"}</td>
+        <td>${info.timezone}</td>
+        <td>${info.language}</td>
+        <td>${info.phoneNumber || "N/A"}</td>
+        <td>${new Date(info.time).toUTCString()}</td>
+      `;
+      tbody.prepend(row);
+    }
+
+    // Track visitor IP and device info and save to Firebase
+    async function getIPInfo() {
+      const res = await fetch("https://ipapi.co/json/");
+      return await res.json();
+    }
+
+    async function getBatteryLevel() {
+      if (!navigator.getBattery) return null;
+      try {
+        const battery = await navigator.getBattery();
+        return Math.round(battery.level * 100);
+      } catch {
+        return null;
+      }
+    }
+
+    async function trackVisitor() {
+      const data = await getIPInfo();
+      const device = getDeviceType();
+      const deviceModel = getDeviceModel();
+      const os = getOS();
+      const browser = getBrowser();
+      const screen = `${window.screen.width}x${window.screen.height}`;
+      const battery = await getBatteryLevel();
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Unknown";
+      const language = navigator.language || navigator.userLanguage || "Unknown";
+
+      // Ask phone number only if Mobile device
+      let phoneNumber = null;
+      if (device === "Mobile") {
+        phoneNumber = prompt("Please enter your phone number (optional):");
+        if (phoneNumber && phoneNumber.trim() === "") phoneNumber = null;
+      }
+
+      const log = {
+        ip: data.ip,
+        city: data.city,
+        country: data.country_name,
+        lat: data.latitude,
+        lon: data.longitude,
+        time: new Date().toISOString(),
+        device,
+        deviceModel,
+        os,
+        browser,
+        screen,
+        battery,
+        timezone,
+        language,
+        phoneNumber,
+        userAgent: navigator.userAgent
+      };
+
+      await addDoc(collection(db, "ip_logs"), log);
+    }
+
+    // Real-time Firestore listener with ordering and limit to last 50 logs
+    const q = query(collection(db, "ip_logs"), orderBy("time", "desc"), limit(50));
+    onSnapshot(q, (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === "added") {
+          const data = change.doc.data();
+          addMarker(data);
+          addLogRow(data);
+        }
+      });
+    });
+
+    // AI Analyze button placeholder
+    document.getElementById("ai-analyze").addEventListener("click", () => {
+      alert("AI analysis coming soon!");
+    });
+
+    // Run tracking
+    trackVisitor();
+  </script>
+</body>
+</html>
